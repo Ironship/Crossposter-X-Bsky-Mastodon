@@ -13,7 +13,7 @@ Configuration
 Authentication
 Fill in the necessary keys and passwords in auth.py:
 
-1 vulnerability
+
 Settings
 Configure the script behavior in settings.py:
 
