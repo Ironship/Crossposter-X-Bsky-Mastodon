@@ -67,7 +67,7 @@ ignore_tags_mastodon = ["#m", "#nomastodon", "#exclusivebsky"]
 # Maximum tweet length for your account.
 # Default is 280. If you have a Twitter Blue subscription, you can set it to 4000.
 max_tweet_length = (
-    4000  # Change to 4000 if you have that capability with Twitter Blue subscription
+    280  # Change to 4000 if you have that capability with Twitter Blue subscription
 )
 
 

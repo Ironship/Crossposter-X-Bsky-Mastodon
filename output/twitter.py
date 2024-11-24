@@ -55,7 +55,7 @@ def upload_media(media_items):
     return media_ids
 
 
-def split_text_into_tweets(text, max_length=280):
+def split_text_into_tweets(text, max_length=settings.max_tweet_length):
     """
     Splits the text into a list of tweets, each not exceeding max_length.
     """
@@ -118,9 +118,11 @@ def post_thread(text, initial_reply_to_id=None, media_ids=None):
 def tweet(
     post_text, reply_to_post=None, quote_post=None, media=None, allowed_reply=None
 ):
-    """
-    Posts a tweet or thread to Twitter, handling exceptions and retries.
-    """
+    """Posts a tweet or thread to Twitter"""
+    if len(post_text) > settings.max_tweet_length:
+        logger.info("Text exceeds max length, creating thread...")
+        return post_thread(post_text, reply_to_post, media)
+
     MAX_RETRIES = 3
     retries = 0
     reply_settings = set_reply_settings(allowed_reply)

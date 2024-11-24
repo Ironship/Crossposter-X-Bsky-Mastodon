@@ -47,6 +47,21 @@ def bsky_connect():
                     os.remove(session_cache_path)
         exit()
 
+def remove_tags(text):
+    """
+    Removes hashtags from the text.
+
+    Args:
+        text (str): The text containing hashtags.
+
+    Returns:
+        str: Text with hashtags removed.
+    """
+    # Split text into words and filter out hashtags
+    words = text.split()
+    filtered_words = [word for word in words if not word.startswith('#')]
+    return ' '.join(filtered_words)
+
 
 def get_posts(timelimit=None, deleted_cids=None):
     """
@@ -83,13 +98,27 @@ def get_posts(timelimit=None, deleted_cids=None):
 
         # Determine if the post should be crossposted based on language settings
         langs = feed_view.post.record.langs
-        mastodon_post = settings.Mastodon and lang_toggle(langs, "mastodon")
+        text = feed_view.post.record.text
+        orig_text = text
+
+        # Check Twitter ignore tags
         twitter_post = settings.Twitter and lang_toggle(langs, "twitter")
+        if twitter_post:
+            twitter_post = not check_ignored_tags(text, "twitter")
+
+        # Check Mastodon ignore tags
+        mastodon_post = settings.Mastodon and lang_toggle(langs, "mastodon")
+        if mastodon_post:
+            mastodon_post = not check_ignored_tags(text, "mastodon")
+
+        # Remove tags if post will be crossposted
+        if twitter_post or mastodon_post:
+            text = remove_tags(text)
+
         if not mastodon_post and not twitter_post:
             continue
 
         cid = feed_view.post.cid
-        text = feed_view.post.record.text
 
         # Remove ignored tags from text
         text, has_ignored_tag = remove_ignored_tags(text)
@@ -493,3 +522,12 @@ def get_video_data(feed_view):
     url = f"https://bsky.social/xrpc/com.atproto.sync.getBlob?did={did}&cid={blob_cid}"
     alt = feed_view.post.record.embed.alt or ""
     return {"url": url, "alt": alt}
+
+def check_ignored_tags(text, platform):
+    """Check if text contains any ignored tags for the specified platform"""
+    tags = (settings.ignore_tags_twitter if platform == "twitter"
+            else settings.ignore_tags_mastodon)
+    for tag in tags:
+        if tag in text:
+            return True
+    return False

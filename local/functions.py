@@ -4,16 +4,20 @@ from settings.auth import *
 from settings.paths import *
 from local.functions import *
 from settings import settings
-import  os, shutil, re, arrow, sys
+import os, shutil, re, arrow, sys
 
 
 # Setting up logging
 logger.remove()
 log_format = "<yellow>{time:YYYY-MM-DD HH:mm:ss}</yellow> <lvl>[{level}]: {message}</lvl> <yellow>({function} {file}:{line})</yellow>"
 logger.add(sys.stdout, format=log_format)
-logger.add("%s/kamrat_{time:YYMMDD}.log" % log_path,
-        format=log_format, 
-        rotation="00:00", retention="1 week")
+logger.add(
+    "%s/kamrat_{time:YYMMDD}.log" % log_path,
+    format=log_format,
+    rotation="00:00",
+    retention="1 week",
+)
+
 
 # A wrapper class for the atproto client that allows us to get ratelimit info
 class RateLimitedClient(Client):
@@ -34,36 +38,47 @@ class RateLimitedClient(Client):
         self._remaining = self.response.headers.get("RateLimit-Remaining")
         self._reset = self.response.headers.get("RateLimit-Reset")
         if (int(self._remaining) / int(self._limit)) * 100 < settings.rate_limit_buffer:
-            logger.info("Rate limit buffer reached, after this run poster will pause until %s" % arrow.Arrow.fromtimestamp(self._reset).format("YYYY-MM-DD HH:mm:ss"))
+            logger.info(
+                "Rate limit buffer reached, after this run poster will pause until %s"
+                % arrow.Arrow.fromtimestamp(self._reset).format("YYYY-MM-DD HH:mm:ss")
+            )
             rate_limit_write(self._reset)
         else:
-            logger.info("Bluesky rate limit has %s out of %s remaining." % (self._remaining, self._limit))
+            logger.info(
+                "Bluesky rate limit has %s out of %s remaining."
+                % (self._remaining, self._limit)
+            )
 
         return self.response
-    
+
     def get_reply_to_user(self, reply):
         uri = reply.uri
         username = ""
-        try: 
+        try:
             response = self.app.bsky.feed.get_post_thread(params={"uri": uri})
             username = response.thread.post.author.handle
         except Exception as e:
-            logger.info("Unable to retrieve reply_to-user of post. Probably a reply to a deleted post.")
+            logger.info(
+                "Unable to retrieve reply_to-user of post. Probably a reply to a deleted post."
+            )
         return username
 
+
 def on_session_change(event: SessionEvent, session: Session) -> None:
-    print('Session changed:', event, repr(session))
+    print("Session changed:", event, repr(session))
     if event in (SessionEvent.CREATE, SessionEvent.REFRESH):
-        print('Saving changed session')
+        print("Saving changed session")
         session_cache_write(session.export())
+
 
 def session_cache_read():
     logger.info("Reading session cache")
     if not os.path.exists(session_cache_path):
         logger.info(session_cache_path + " not found.")
         return None
-    with open(session_cache_path, 'r') as file:
+    with open(session_cache_path, "r") as file:
         return file.read()
+
 
 def session_cache_write(session):
     logger.info("Saving session cache")
@@ -76,14 +91,18 @@ def check_rate_limit():
     logger.info("Checking if application has reach rate limit buffer limit.")
     if not os.path.exists(rate_limit_path):
         return False
-    with open(rate_limit_path, 'r') as file:
+    with open(rate_limit_path, "r") as file:
         timestamp = arrow.Arrow.fromtimestamp(file.read())
         if timestamp > arrow.now():
-            logger.info("Rate limit buffer reached, will resume posting %s" % timestamp.humanize())
+            logger.info(
+                "Rate limit buffer reached, will resume posting %s"
+                % timestamp.humanize()
+            )
             return True
         else:
             os.remove(rate_limit_path)
             return False
+
 
 def rate_limit_write(ratelimit_reset):
     logger.info("Saving ratelimit-reset time")
@@ -104,9 +123,10 @@ def lang_toggle(langs, service):
     if not lang_toggle:
         return True
     if langs and lang_toggle in langs:
-        return (not settings.post_default)
+        return not settings.post_default
     else:
         return settings.post_default
+
 
 # Function for correctly counting post length
 def post_length(post):
@@ -123,12 +143,11 @@ def post_length(post):
     return length
 
 
-
 # Cleaning up downloaded images
 def cleanup():
     logger.info("Deleting local images")
     for filename in os.listdir(image_path):
-        if (filename == ".gitignore"):
+        if filename == ".gitignore":
             continue
         file_path = os.path.join(image_path, filename)
         try:
@@ -137,19 +156,21 @@ def cleanup():
             elif os.path.isdir(file_path):
                 shutil.rmtree(file_path)
         except Exception as e:
-            logger.error('Failed to delete %s. Reason: %s' % (file_path, e))
+            logger.error("Failed to delete %s. Reason: %s" % (file_path, e))
+
 
 # Following two functions deals with the post per hour limit
+
 
 # Function for reading post log and checking number of posts sent in last hour
 def post_cache_read():
     logger.info("Reading cache of recent posts.")
     cache = {}
-    timelimit = arrow.utcnow().shift(hours = -1)
+    timelimit = arrow.utcnow().shift(hours=-1)
     if not os.path.exists(post_cache_path):
         logger.info(post_cache_path + " not found.")
         return cache
-    with open(post_cache_path, 'r') as file:
+    with open(post_cache_path, "r") as file:
         for line in file:
             try:
                 post_id = line.split(";")[0]
@@ -161,6 +182,7 @@ def post_cache_read():
             if timestamp > timelimit:
                 cache[post_id] = timestamp
     return cache
+
 
 def post_cache_write(cache):
     logger.info("Saving post cache.")
@@ -176,16 +198,16 @@ def post_cache_write(cache):
         file.close()
         append_write = "a"
 
-# The timelimit specifies the cutoff time for which posts are crossposted. This is usually based on the 
+
+# The timelimit specifies the cutoff time for which posts are crossposted. This is usually based on the
 # post_time_limit in settings, but if overflow_posts is set to "skip", meaning any posts that could
 # not be posted due to the hourly post max limit is to be skipped, then the timelimit is instead set to
 # when the last post was sent.
 def get_post_time_limit(cache):
-    timelimit = arrow.utcnow().shift(hours = -settings.post_time_limit)
+    timelimit = arrow.utcnow().shift(hours=-settings.post_time_limit)
     if settings.overflow_posts != "skip":
         return timelimit
     for post_id in cache:
         if timelimit < cache[post_id]:
             timelimit = cache[post_id]
     return timelimit
-
