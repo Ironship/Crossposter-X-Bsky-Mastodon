@@ -1,6 +1,6 @@
 import random, string, urllib, arrow, requests, traceback
 from loguru import logger
-from settings import settings 
+from settings import settings
 from settings.paths import *
 from local.db import db_write
 from output.twitter import tweet, retweet, delete as delete_tweet
@@ -53,7 +53,7 @@ def post(posts, database, post_cache):
         if tweet_id and toot_id and not post["repost"]:
             continue
         # If a retweet is found within the last hour, we check the cache to see if it has already been retweeted
-        repost_timelimit = arrow.utcnow().shift(hours = -1)
+        repost_timelimit = arrow.utcnow().shift(hours=-1)
         if cid in post_cache:
             repost_timelimit = post_cache[cid]
         # If it is a reply, we get the IDs of the posts we want to reply to from the database.
@@ -63,21 +63,27 @@ def post(posts, database, post_cache):
             tweet_reply = database[post["reply_to_post"]]["ids"]["twitter_id"]
             toot_reply = database[post["reply_to_post"]]["ids"]["mastodon_id"]
         elif post["reply_to_post"] and post["reply_to_post"] not in database:
-            logger.info("Post " + cid + " was a reply to a post that is not in the database.")
+            logger.info(
+                "Post " + cid + " was a reply to a post that is not in the database."
+            )
             continue
         # If post is a quote post we get the IDs of the posts we want to quote from the database.
         # If the posts are not found in the database we check if the quote_post setting is true or false in settings.
         # If true we add the URL of the bluesky post to the text of the post, if false we skip the post.
         if post["quoted_post"] in database:
-            tweet_quote = database[post["quoted_post"] ]["ids"]["twitter_id"]
-            toot_quote = database[post["quoted_post"] ]["ids"]["mastodon_id"]
-        elif post["quoted_post"]  and post["quoted_post"]  not in database:
-            if settings.quote_posts and post["quote_url"]  not in post["text"]:
+            tweet_quote = database[post["quoted_post"]]["ids"]["twitter_id"]
+            toot_quote = database[post["quoted_post"]]["ids"]["mastodon_id"]
+        elif post["quoted_post"] and post["quoted_post"] not in database:
+            if settings.quote_posts and post["quote_url"] not in post["text"]:
                 post["text"] += "\n" + post["quote_url"]
             elif not settings.quote_posts:
-                logger.error("Post " + cid + " was a quote of a post that is not in the database.")
+                logger.error(
+                    "Post "
+                    + cid
+                    + " was a quote of a post that is not in the database."
+                )
                 continue
-        # In case the tweet or toot reply/quote variables are empty, we set them to None, to make sure they are in the correct format for 
+        # In case the tweet or toot reply/quote variables are empty, we set them to None, to make sure they are in the correct format for
         # the api requests. This is not necessary for the toot_quote variable, as it is not sent as a parameter in itself anyway.
         if not tweet_reply:
             tweet_reply = None
@@ -109,10 +115,16 @@ def post(posts, database, post_cache):
                 logger.error(traceback.format_exc())
         # Trying to post to twitter and mastodon. If posting fails the post ID for each service is set to an
         # empty string, letting the code know it should try again next time the code is run.
-        elif not tweet_id and tweet_reply not in ["skipped", "FailedToPost", "duplicate"]:
+        elif not tweet_id and tweet_reply not in [
+            "skipped",
+            "FailedToPost",
+            "duplicate",
+        ]:
             updates = True
             try:
-                tweet_id = tweet(post["text"], tweet_reply, tweet_quote, media, post["allowed_reply"])
+                tweet_id = tweet(
+                    post["text"], tweet_reply, tweet_quote, media, post["allowed_reply"]
+                )
                 posted = True
             except Exception as e:
                 logger.error(traceback.format_exc())
@@ -141,7 +153,9 @@ def post(posts, database, post_cache):
         elif not toot_id and toot_reply not in ["skipped", "FailedToPost", "duplicate"]:
             updates = True
             try:
-                toot_id = toot(post["text"], toot_reply, toot_quote, media, post["visibility"])
+                toot_id = toot(
+                    post["text"], toot_reply, toot_quote, media, post["visibility"]
+                )
                 posted = True
             except Exception as e:
                 logger.error(traceback.format_exc())
@@ -150,51 +164,57 @@ def post(posts, database, post_cache):
         else:
             logger.info("Not posting " + cid + " to Mastodon")
         # Saving post to database
-        database = db_write(cid, tweet_id, toot_id, {"twitter": t_fail, "mastodon": m_fail}, database)
+        database = db_write(
+            cid, tweet_id, toot_id, {"twitter": t_fail, "mastodon": m_fail}, database
+        )
         if posted:
             post_cache[cid] = arrow.utcnow()
     return updates, database, post_cache
 
-# Function for getting included images. If no images are included, an empty list will be returned, 
+
+# Function for getting included images. If no images are included, an empty list will be returned,
 # and the posting functions will know not to include any images.
 def get_images(images):
     local_images = []
     for image in images:
         # Giving the image just a random filename
-        filename = ''.join(random.choice(string.ascii_lowercase) for i in range(10)) + ".jpg"
+        filename = (
+            "".join(random.choice(string.ascii_lowercase) for i in range(10)) + ".jpg"
+        )
         filename = image_path + filename
         # Downloading fullsize version of image
         urllib.request.urlretrieve(image["url"], filename)
         # Saving image info in a dictionary and adding it to the list.
-        image_info = {
-            "filename": filename,
-            "alt": image["alt"]
-        }
+        image_info = {"filename": filename, "alt": image["alt"]}
         local_images.append(image_info)
     return local_images
 
+
 def get_video(video_data):
     # Giving the video just a random filename
-    filename = ''.join(random.choice(string.ascii_lowercase) for i in range(10)) + ".mp4"
+    filename = (
+        "".join(random.choice(string.ascii_lowercase) for i in range(10)) + ".mp4"
+    )
     filename = image_path + filename
     response = requests.get(video_data["url"])
     if response.status_code != 200:
         logger.error("Failed to download: %s." % response.text)
-        return 
-    if 'video' not in response.headers.get('Content-Type', ''):
+        return
+    if "video" not in response.headers.get("Content-Type", ""):
         logger.error("Response is not a valid video file.")
         return
-    with open(filename, 'wb') as f:
+    with open(filename, "wb") as f:
         f.write(response.content)
     logger.info("Video successfully downloaded to %s." % filename)
-    return [{ "filename": filename, "alt": video_data["alt"] }]
+    return [{"filename": filename, "alt": video_data["alt"]}]
+
 
 def delete(deleted, post_cache, database):
     for cid in deleted:
         if settings.Twitter:
             delete_tweet(database[cid]["ids"]["twitter_id"])
         if settings.Mastodon:
-            delete_toot(database[cid]["ids"]["mastodon_id"] )
+            delete_toot(database[cid]["ids"]["mastodon_id"])
         del database[cid]
         del post_cache[cid]
         logger.info("Deleted post " + str(cid))
