@@ -3,11 +3,11 @@
 # base_path is the path from root to the lowest common denominator for all of the other paths.
 # Using an absolute path is especially important if running via cron.
 base_path = "./"
-# Path to the database file. If you want it somewhere other than directly in the base path you can 
+# Path to the database file. If you want it somewhere other than directly in the base path you can
 # either write the entire path manually, or just add the rest of the path on top of the basePath.
 database_path = base_path + "db/database.json"
 # Path to the cache-file, which keeps track of recent posts, allowing you to limit posts per hours and
-# retweet yourself 
+# retweet yourself
 post_cache_path = base_path + "db/post.cache"
 # Path to the session cache
 session_cache_path = base_path + "db/session.cache"

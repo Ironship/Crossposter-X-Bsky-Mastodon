@@ -1,14 +1,28 @@
+import os
+import arrow
 from loguru import logger
-from settings.auth import BSKY_HANDLE, BSKY_PASSWORD
-from settings.paths import *
 from settings import settings
-from local.functions import RateLimitedClient, lang_toggle, rate_limit_write, session_cache_read, session_cache_write, on_session_change
-import arrow, os
+from settings.auth import BSKY_HANDLE, BSKY_PASSWORD
+from settings.paths import session_cache_path
+from local.functions import (
+    RateLimitedClient,
+    lang_toggle,
+    rate_limit_write,
+    session_cache_read,
+    session_cache_write,
+    on_session_change,
+)
 
-date_in_format = 'YYYY-MM-DDTHH:mm:ss'
+DATE_FORMAT = "YYYY-MM-DDTHH:mm:ss"
 
-# Setting up connections to bluesky, twitter and mastodon
+
 def bsky_connect():
+    """
+    Establish a connection to Bluesky, handling session management and rate limits.
+
+    Returns:
+        RateLimitedClient: An authenticated Bluesky client instance.
+    """
     try:
         bsky = RateLimitedClient()
         bsky.on_session_change(on_session_change)
@@ -17,256 +31,465 @@ def bsky_connect():
             logger.info("Connecting to Bluesky using saved session.")
             bsky.login(session_string=session)
         else:
-            logger.info("Creating new Bluesky session using password and username.")
+            logger.info("Creating new Bluesky session using username and password.")
             bsky.login(BSKY_HANDLE, BSKY_PASSWORD)
-        session = bsky.export_session_string()
-        session_cache_write(session)
+        session_cache_write(bsky.export_session_string())
         return bsky
     except Exception as e:
-        logger.error(e)
-        if e.response.content.error == "RateLimitExceeded":
-            ratelimit_reset = e.response.headers["RateLimit-Reset"]
-            rate_limit_write(ratelimit_reset)
-        elif e.response.content.error == "ExpiredToken":
-            logger.info("Session expired, removing session file.")
-            os.remove(session_cache_path)
+        logger.error(f"Error connecting to Bluesky: {e}")
+        if hasattr(e, "response") and hasattr(e.response, "content"):
+            if e.response.content.error == "RateLimitExceeded":
+                ratelimit_reset = e.response.headers.get("RateLimit-Reset")
+                rate_limit_write(ratelimit_reset)
+            elif e.response.content.error == "ExpiredToken":
+                logger.info("Session expired, removing session file.")
+                if os.path.exists(session_cache_path):
+                    os.remove(session_cache_path)
         exit()
 
-# Getting posts from bluesky
 
-def get_posts(timelimit = arrow.utcnow().shift(hours = -1), deleted = []):
+def get_posts(timelimit=None, deleted_cids=None):
+    """
+    Fetches posts from Bluesky within a specified time limit and processes them for cross-posting.
+
+    Args:
+        timelimit (arrow.Arrow, optional): The time limit for fetching posts. Defaults to one hour ago.
+        deleted_cids (list, optional): List of post CIDs that have been deleted. Defaults to an empty list.
+
+    Returns:
+        tuple: A dictionary of processed posts and a list of deleted CIDs.
+    """
+    if timelimit is None:
+        timelimit = arrow.utcnow().shift(hours=-1)
+    if deleted_cids is None:
+        deleted_cids = []
+
     bsky = bsky_connect()
-    logger.info("Gathering posts")
+    logger.info("Gathering posts from Bluesky.")
     posts = {}
+
     # Getting feed of user
-    profile_feed = bsky.app.bsky.feed.get_author_feed({'actor': BSKY_HANDLE})
-    visibility = settings.visibility
+    profile_feed = bsky.app.bsky.feed.get_author_feed({"actor": BSKY_HANDLE})
+    visibility_setting = settings.visibility
+
     for feed_view in profile_feed.feed:
-#        logger.debug(feed_view)
-        # If the post was not written by the account that posted it, it is a repost from another account and we skip it.
+        # Skip reposts from other accounts
         if feed_view.post.author.handle != BSKY_HANDLE:
             continue
-        # Checking if the post has "indexe_at" set, meaning it is a repost.
-        repost = False
-        created_at = arrow.get(feed_view.post.record.created_at.split(".")[0], date_in_format)
-        if hasattr(feed_view.reason, "indexed_at"):
-            repost = True
-            created_at = arrow.get(feed_view.reason.indexed_at.split(".")[0], date_in_format)
-        # The language settings on posts are used to determine if a post should be crossposted
-        # to a specific service. Here we check the settings against the language of the post to 
-        # see what service it should post to. We also check if posting for a service is enabled
-        # at all in the settings. If it shouldn't post to either, we skip it.
+
+        # Determine if the post is a repost
+        is_repost = hasattr(feed_view.reason, "indexed_at")
+        created_at = get_post_created_at(feed_view, is_repost)
+
+        # Determine if the post should be crossposted based on language settings
         langs = feed_view.post.record.langs
-        mastodon_post = (lang_toggle(langs, "mastodon") and settings.Mastodon)
-        twitter_post = (lang_toggle(langs, "twitter") and settings.Twitter)
+        mastodon_post = settings.Mastodon and lang_toggle(langs, "mastodon")
+        twitter_post = settings.Twitter and lang_toggle(langs, "twitter")
         if not mastodon_post and not twitter_post:
             continue
+
         cid = feed_view.post.cid
         text = feed_view.post.record.text
-        # Checking if there are any posts in the cache that are no longer in the timeline, meaning they have been deleted.
-        if cid in deleted:
-            deleted.remove(cid)
-        # Facets contains things like urls and mentions, which we need to deal with.
-        # send_mention is used to keep track of if the mention-settings says for the post to be posted or not.
-        # Default is True, because if nobody is mentioned it should be posted.
+
+        # Remove ignored tags from text
+        text, has_ignored_tag = remove_ignored_tags(text)
+
+        # Skip posts with ignored tags
+        if has_ignored_tag:
+            logger.info(
+                f"Post with CID {cid} contains ignored tags and will not be posted."
+            )
+            continue
+
+        # Update deleted_cids if the post is no longer in the timeline
+        if cid in deleted_cids:
+            deleted_cids.remove(cid)
+
+        # Process facets (URLs, mentions)
         send_mention = True
         if feed_view.post.record.facets:
-            # Sometimes bluesky shortens URLs and in that case we need to restore them before crossposting
-            text = restore_urls(feed_view.post.record)
-            # If a user is mentioned the parse_mentioned_username function will deal with it according
-            # to how the variable "mentions" is set in settings. If it is set to "ignore", nothing is
-            # done.
-            if settings.mentions != "ignore":
-                text, send_mention = parse_mentioned_username(feed_view.post.record, text)
-        # If "mentions" is set to "skip" a post with a mention should not be crossposted, and parse_mentioned_username will
-        # return send_mention as False.
+            text = restore_urls(feed_view.post.record, text)
+            text, send_mention = handle_mentions(feed_view.post.record, text)
         if not send_mention:
             continue
-        # Setting reply_to_user to the same as user handle and only changing it if the tweet is an actual reply.
-        # This way we can just check if the variable is the same as the user handle later and send through
-        # both tweets that are not replies, and posts that are part of a thread.
+
+        # Handle replies and quotes
         reply_to_user = BSKY_HANDLE
         reply_to_post = ""
         quoted_post = ""
         quote_url = ""
-        # Checking who is allowed to reply to the post
         allowed_reply = get_allowed_reply(feed_view.post)
-        # Checking if post is a quote post. Posts with references to feeds look like quote posts but aren't, and so will fail on missing attribute.
-        # Since quote posts can give values in two different ways it's a bit of a hassle to double check if it is an actual quote post,
-        # so instead I just try to run the function and if it fails I skip the post
-        # If there is some reason you would want to crosspost a post referencing a bluesky-feed that I'm not seeing, I might update this in the future.
-        if feed_view.post.embed and hasattr(feed_view.post.embed, "record"):
+
+        if is_quote_post(feed_view.post):
             try:
-                quoted_user, quoted_post, quote_url, open = get_quote_post(feed_view.post.embed.record)
-            except:
-                logger.error("Post " + cid + " is of a type the crossposter can't parse.")
+                quoted_user, quoted_post, quote_url, is_open = get_quote_post_info(
+                    feed_view.post.embed.record
+                )
+            except Exception as e:
+                logger.error(f"Cannot parse quoted post in CID {cid}: {e}")
                 continue
-            # If post is a quote post of a post from another user, and quote-posting is disabled in settings
-            # or the post is not open to users not logged in, the post will be skipped
-            if quoted_user != BSKY_HANDLE and (not settings.quote_posts or not open):
+            if not should_crosspost_quote(quoted_user, is_open):
                 continue
-            # If the post is a quote of ourselves, the url to the post is removed (if it was included),
-            # as we instead want to reference the version of the post from twitter or mastodon.
-            # If no such post exists, we can add back the link to the bluesky-post later
-            elif quoted_user == BSKY_HANDLE:
+            if quoted_user == BSKY_HANDLE:
                 text = text.replace(quote_url, "")
-        # Checking if post is regular reply
+
         if feed_view.post.record.reply:
             reply_to_post = feed_view.post.record.reply.parent.cid
-            # Poster will try to fetch reply to-username the "ordinary" way, 
-            # and if it fails, it will try getting the entire thread and
-            # finding it that way
-            try:
-                reply_to_user = feed_view.reply.parent.author.handle
-            except:
-                reply_to_user = bsky.get_reply_to_user(feed_view.post.record.reply.parent)
-        # If unable to fetch user that was replied to, code will skip this post. If the post was not a 
-        # reply at all, the reply_to_user will still be set to the user account.
+            reply_to_user = get_reply_to_user(feed_view, bsky)
+
         if not reply_to_user:
-            logger.info("Unable to find the user that post " + cid + " replies to or quotes")
+            logger.info(
+                f"Unable to find the user that post {cid} replies to or quotes."
+            )
             continue
-        # Checking if post is withing timelimit and not a reply to someone elses post.
+
+        # Check if the post is within the time limit and not a reply to someone else
         if created_at > timelimit and reply_to_user == BSKY_HANDLE:
-            # Fetching images if there are any in the post
-            image_data = ""
-            video_data = {}
-            media = {}
-            if feed_view.post.embed and hasattr(feed_view.post.embed, "images"):
-                image_data = feed_view.post.embed.images
-            elif feed_view.post.embed and hasattr(feed_view.post.embed, "media") and hasattr(feed_view.post.embed.media, "images"):
-                image_data = feed_view.post.embed.media.images
-            elif  feed_view.post.record.embed and hasattr(feed_view.post.record.embed, "video"):
-                video_data = get_video_data(feed_view)
-                media = {
-                    "type": "video",
-                    "data": video_data
-                }
-                logger.debug("Found video: %s" % video_data)
-            # Sometimes posts have included links that are not included in the actual text of the post. This adds adds that back.
-            if feed_view.post.embed and hasattr(feed_view.post.embed, "external") and hasattr(feed_view.post.embed.external, "uri"):
-                if feed_view.post.embed.external.uri not in text:
-                    text += '\n'+feed_view.post.embed.external.uri
-            if image_data:
-                images = []
-                for image in image_data:
-                    images.append({"url": image.fullsize, "alt": image.alt})
-                media = {
-                    "type": "image",
-                    "data": images
-                }
-            if visibility == "hybrid" and reply_to_post:
-                visibility = "unlisted"
-            elif visibility == "hybrid":
-                visibility = "public"
-            post_info = {
-                "text": text,
-                "reply_to_post": reply_to_post,
-                "quoted_post": quoted_post,
-                "quote_url": quote_url,
-                "media": media,
-                "visibility": visibility,
-                "twitter": twitter_post,
-                "mastodon": mastodon_post,
-                "allowed_reply": allowed_reply,
-                "repost": repost,
-                "timestamp": created_at
-            }
-            logger.debug(post_info)
-            # Saving post to posts dictionary
-            posts[cid] = post_info;
-    return posts, deleted
+            media = get_media_info(feed_view)
+            visibility = determine_visibility(visibility_setting, reply_to_post)
+            post_info = create_post_info(
+                text=text,
+                reply_to_post=reply_to_post,
+                quoted_post=quoted_post,
+                quote_url=quote_url,
+                media=media,
+                visibility=visibility,
+                twitter=twitter_post,
+                mastodon=mastodon_post,
+                allowed_reply=allowed_reply,
+                is_repost=is_repost,
+                timestamp=created_at,
+            )
+            logger.debug(f"Processed post info: {post_info}")
+            posts[cid] = post_info
 
-def get_allowed_reply(post):
-        reply_restriction = post.threadgate
-        if reply_restriction is None:
-            return "All"
-        if len(reply_restriction.record.allow) == 0:
-            return "None"
-        if reply_restriction.record.allow[0].py_type == "app.bsky.feed.threadgate#followingRule":
-            return "Following"
-        if reply_restriction.record.allow[0].py_type == "app.bsky.feed.threadgate#mentionRule":
-            return "Mentioned"
-        return "Unknown"
-
-# Function for restoring shortened URLS
-def restore_urls(record):
-    text = record.text
-    encoded_text = text.encode("UTF-8")
-    for facet in record.facets:
-        if facet.features[0].py_type != "app.bsky.richtext.facet#link":
-            continue
-        url = facet.features[0].uri
-        # The index section designates where a URL starts end ends. Using this we can pick out the exact
-        # string representing the URL in the post, and replace it with the actual URL.
-        start = facet.index.byte_start
-        end = facet.index.byte_end
-        section = encoded_text[start:end]
-        shortened = section.decode("UTF-8")
-        text = text.replace(shortened, url)
-    return text
+    return posts, deleted_cids
 
 
-def parse_mentioned_username(record, text):
-    # send_mention keeps track if the post should be sent at all.
+def get_post_created_at(feed_view, is_repost):
+    """
+    Retrieves the creation time of a post.
+
+    Args:
+        feed_view: The feed view object containing the post.
+        is_repost (bool): Indicates if the post is a repost.
+
+    Returns:
+        arrow.Arrow: The creation time of the post.
+    """
+    if is_repost:
+        created_at_str = feed_view.reason.indexed_at.split(".")[0]
+    else:
+        created_at_str = feed_view.post.record.created_at.split(".")[0]
+    return arrow.get(created_at_str, DATE_FORMAT)
+
+
+def remove_ignored_tags(text):
+    """
+    Removes ignored tags from the post text and checks if any were found.
+
+    Args:
+        text (str): The original post text.
+
+    Returns:
+        tuple: Updated text and a boolean indicating if ignored tags were found.
+    """
+    found_ignored_tag = False
+    for tag in settings.ignore_tags_twitter + settings.ignore_tags_mastodon:
+        if tag in text:
+            found_ignored_tag = True
+        text = text.replace(tag, "").strip()
+    return text, found_ignored_tag
+
+
+def handle_mentions(record, text):
+    """
+    Processes mentions in the post text based on settings.
+
+    Args:
+        record: The post record containing facets.
+        text (str): The original post text.
+
+    Returns:
+        tuple: The updated text and a boolean indicating if the post should be sent.
+    """
     send_mention = True
     encoded_text = text.encode("UTF-8")
     for facet in record.facets:
         if facet.features[0].py_type != "app.bsky.richtext.facet#mention":
             continue
-        # The index section designates where a username starts end ends. Using this we can pick out the exact
-        # string representing the user in the post, and replace it with the corrected value
         start = facet.index.byte_start
         end = facet.index.byte_end
-        username = encoded_text[start:end]
-        username = username.decode("UTF-8")
-        # If the mentions setting is set to skip, None will be returned, if it's set to strip the
-        # text will be returned with the @ of the username removed, if it's set to URL the name will
-        # be replaced with a link to the profile.
+        username = encoded_text[start:end].decode("UTF-8")
         if settings.mentions == "skip":
             send_mention = False
+            break
         elif settings.mentions == "strip":
             text = text.replace(username, username.replace("@", ""))
         elif settings.mentions == "url":
             base_url = "https://bsky.app/profile/"
             did = facet.features[0].did
-            url = base_url + did
+            url = f"{base_url}{did}"
             text = text.replace(username, url)
     return text, send_mention
 
-# Quoted posts can be stored in several different ways for some reason. With this
-# function we check which one is used and fetches information accordingly.
-def get_quote_post(post):
-    open = True
-    if isinstance(post, dict):
-        user = post["record"]["author"]["handle"]
-        cid = post["record"]["cid"]
-        uri = post["record"]["uri"]
-        labels = post["record"]["author"]["labels"]
-    elif hasattr(post, "author"):
-        user = post.author.handle
-        cid = post.cid
-        uri = post.uri
-        labels = post.author.labels
-    else:
-        user = post.record.author.handle
-        cid = post.record.cid
-        uri = post.record.uri
-        labels = post.record.author.labels
-    # the val label is used by bluesky to check if a post should be viewable by people
-    # who are not logged in. When crossposting with a link to a bsky post, we first
-    # want to make sure that the post in question is publicly available.
-    if labels and labels[0].val == "!no-unauthenticated":
-        open = False
-    url = "https://bsky.app/profile/" + user + "/post/" + uri.split("/")[-1]
-    return user, cid, url, open
+
+def is_quote_post(post):
+    """
+    Checks if a post is a quote post.
+
+    Args:
+        post: The post object.
+
+    Returns:
+        bool: True if the post is a quote post, False otherwise.
+    """
+    return post.embed and hasattr(post.embed, "record")
 
 
-def get_video_data(post_data):
-    did = post_data["post"]["author"]["did"]
-    blob_cid = post_data["post"]["record"]["embed"]["video"].ref.link
-    url = "https://bsky.social/xrpc/com.atproto.sync.getBlob?did=%s&cid=%s" % (did, blob_cid)
-    alt = post_data["post"]["record"]["embed"]["alt"]
-    # Setting alt to empty string if it is noneType
-    if not alt:
-        alt = ""
+def get_quote_post_info(embed_record):
+    """
+    Retrieves information about the quoted post.
+
+    Args:
+        embed_record: The embedded record of the quoted post.
+
+    Returns:
+        tuple: Quoted user's handle, quoted post's CID, quote URL, and openness status.
+    """
+    try:
+        if hasattr(embed_record, "author"):
+            # Accessing attributes directly since embed_record.author is an object
+            author = embed_record.author
+            user = getattr(author, "handle", None)
+            cid = getattr(embed_record, "cid", None)
+            uri = getattr(embed_record, "uri", None)
+            labels = getattr(author, "labels", [])
+        else:
+            # Assuming embed_record["record"]["author"] is a dict
+            author = embed_record["record"]["author"]
+            if isinstance(author, dict):
+                user = author.get("handle")
+                cid = embed_record["record"].get("cid")
+                uri = embed_record["record"].get("uri")
+                labels = author.get("labels", [])
+            else:
+                # If author is not a dict, attempt attribute access
+                user = getattr(author, "handle", None)
+                cid = getattr(embed_record["record"], "cid", None)
+                uri = getattr(embed_record["record"], "uri", None)
+                labels = getattr(author, "labels", [])
+
+        # Ensure that all necessary fields are present
+        if not all([user, cid, uri]):
+            logger.error(
+                f"Missing necessary fields in embed_record: user={user}, cid={cid}, uri={uri}"
+            )
+            raise ValueError("Incomplete embed_record data.")
+
+        # Determine if the quoted post is open to unauthenticated users
+        is_open = not any(
+            getattr(label, "val", "") == "!no-unauthenticated" for label in labels
+        )
+
+        # Construct the URL to the quoted post
+        post_id = uri.split("/")[-1] if "/" in uri else uri
+        url = f"https://bsky.app/profile/{user}/post/{post_id}"
+
+        return user, cid, url, is_open
+
+    except AttributeError as e:
+        logger.error(f"Attribute error in get_quote_post_info: {e}")
+        raise
+    except KeyError as e:
+        logger.error(f"Key error in get_quote_post_info: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get_quote_post_info: {e}")
+        raise
+
+
+def should_crosspost_quote(quoted_user, is_open):
+    """
+    Determines if a quoted post should be crossposted.
+
+    Args:
+        quoted_user (str): The handle of the quoted user.
+        is_open (bool): Whether the quoted post is open to unauthenticated users.
+
+    Returns:
+        bool: True if the post should be crossposted, False otherwise.
+    """
+    if quoted_user != BSKY_HANDLE and (not settings.quote_posts or not is_open):
+        return False
+    return True
+
+
+def get_reply_to_user(feed_view, bsky):
+    """
+    Retrieves the handle of the user being replied to.
+
+    Args:
+        feed_view: The feed view object containing the post.
+        bsky: The Bluesky client instance.
+
+    Returns:
+        str: The handle of the user being replied to.
+    """
+    try:
+        return feed_view.reply.parent.author.handle
+    except AttributeError:
+        return bsky.get_reply_to_user(feed_view.post.record.reply.parent)
+
+
+def get_media_info(feed_view):
+    """
+    Extracts media information from a feed view.
+
+    Args:
+        feed_view: The feed view object containing the post.
+
+    Returns:
+        dict: A dictionary containing media type and data.
+    """
+    media = {}
+    post_embed = feed_view.post.embed
+    post_record_embed = getattr(feed_view.post.record, "embed", None)
+
+    if hasattr(post_embed, "images"):
+        media = {
+            "type": "image",
+            "data": [
+                {"url": img.fullsize, "alt": img.alt} for img in post_embed.images
+            ],
+        }
+    elif hasattr(post_embed, "media") and hasattr(post_embed.media, "images"):
+        media = {
+            "type": "image",
+            "data": [
+                {"url": img.fullsize, "alt": img.alt} for img in post_embed.media.images
+            ],
+        }
+    elif post_record_embed and hasattr(post_record_embed, "video"):
+        video_data = get_video_data(feed_view)
+        media = {
+            "type": "video",
+            "data": video_data,
+        }
+    # Include external links not present in text
+    if (
+        post_embed
+        and hasattr(post_embed, "external")
+        and hasattr(post_embed.external, "uri")
+    ):
+        external_uri = post_embed.external.uri
+        if external_uri not in feed_view.post.record.text:
+            feed_view.post.record.text += f"\n{external_uri}"
+    return media
+
+
+def determine_visibility(visibility_setting, reply_to_post):
+    """
+    Determines the visibility of the post based on settings.
+
+    Args:
+        visibility_setting (str): The default visibility setting.
+        reply_to_post (str): The CID of the post being replied to.
+
+    Returns:
+        str: The determined visibility ("public", "unlisted", etc.).
+    """
+    if visibility_setting == "hybrid" and reply_to_post:
+        return "unlisted"
+    elif visibility_setting == "hybrid":
+        return "public"
+    return visibility_setting
+
+
+def create_post_info(**kwargs):
+    """
+    Creates a dictionary containing post information.
+
+    Args:
+        **kwargs: Keyword arguments containing post details.
+
+    Returns:
+        dict: A dictionary containing post information.
+    """
+    return {
+        "text": kwargs.get("text"),
+        "reply_to_post": kwargs.get("reply_to_post"),
+        "quoted_post": kwargs.get("quoted_post"),
+        "quote_url": kwargs.get("quote_url"),
+        "media": kwargs.get("media"),
+        "visibility": kwargs.get("visibility"),
+        "twitter": kwargs.get("twitter"),
+        "mastodon": kwargs.get("mastodon"),
+        "allowed_reply": kwargs.get("allowed_reply"),
+        "repost": kwargs.get("is_repost"),
+        "timestamp": kwargs.get("timestamp"),
+    }
+
+
+def get_allowed_reply(post):
+    """
+    Determines who is allowed to reply to the post.
+
+    Args:
+        post: The post object.
+
+    Returns:
+        str: The reply restriction ("All", "None", "Following", "Mentioned", "Unknown").
+    """
+    threadgate = post.threadgate
+    if not threadgate:
+        return "All"
+    allowed_rules = threadgate.record.allow
+    if not allowed_rules:
+        return "None"
+    rule_type = allowed_rules[0].py_type
+    if rule_type == "app.bsky.feed.threadgate#followingRule":
+        return "Following"
+    if rule_type == "app.bsky.feed.threadgate#mentionRule":
+        return "Mentioned"
+    return "Unknown"
+
+
+def restore_urls(record, text):
+    """
+    Restores shortened URLs in the post text.
+
+    Args:
+        record: The post record containing facets.
+        text (str): The original post text.
+
+    Returns:
+        str: The text with URLs restored.
+    """
+    encoded_text = text.encode("UTF-8")
+    for facet in record.facets:
+        if facet.features[0].py_type != "app.bsky.richtext.facet#link":
+            continue
+        url = facet.features[0].uri
+        start = facet.index.byte_start
+        end = facet.index.byte_end
+        shortened = encoded_text[start:end].decode("UTF-8")
+        text = text.replace(shortened, url)
+    return text
+
+
+def get_video_data(feed_view):
+    """
+    Retrieves video data from a feed view.
+
+    Args:
+        feed_view: The feed view object containing the post.
+
+    Returns:
+        dict: A dictionary containing video URL and alt text.
+    """
+    did = feed_view.post.author.did
+    blob_cid = feed_view.post.record.embed.video.ref.link
+    url = f"https://bsky.social/xrpc/com.atproto.sync.getBlob?did={did}&cid={blob_cid}"
+    alt = feed_view.post.record.embed.alt or ""
     return {"url": url, "alt": alt}

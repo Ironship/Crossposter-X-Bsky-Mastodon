@@ -5,13 +5,11 @@ from settings.auth import *
 
 
 if settings.Mastodon:
-    mastodon = Mastodon(
-        access_token = MASTODON_TOKEN,
-        api_base_url = MASTODON_INSTANCE
-    )
+    mastodon = Mastodon(access_token=MASTODON_TOKEN, api_base_url=MASTODON_INSTANCE)
+
 
 # More or less the exact same function as for tweeting, but for tooting.
-def toot(post, reply_to_post, quoted_post, media, visibility = "unlisted"):
+def toot(post, reply_to_post, quoted_post, media, visibility="unlisted"):
     # Since mastodon does not have a quote repost function, quote posts are turned into replies. If the post is both
     # a reply and a quote post, the quote is replaced with a url to the post quoted.
     if reply_to_post is None and quoted_post:
@@ -26,21 +24,33 @@ def toot(post, reply_to_post, quoted_post, media, visibility = "unlisted"):
             # If alt text was added to the image on bluesky, it's also added to the image on mastodon,
             # otherwise it will be uploaded without alt text.
             if item["alt"]:
-                logger.info("Uploading media " + item["filename"] + " with alt: " + item["alt"] + " to mastodon")
-                res = mastodon.media_post(item["filename"], description=item["alt"], synchronous=True)
+                logger.info(
+                    "Uploading media "
+                    + item["filename"]
+                    + " with alt: "
+                    + item["alt"]
+                    + " to mastodon"
+                )
+                res = mastodon.media_post(
+                    item["filename"], description=item["alt"], synchronous=True
+                )
             else:
                 logger.info("Uploading media " + item["filename"])
                 res = mastodon.media_post(item["filename"], synchronous=True)
             media_ids.append(res.id)
-    a = mastodon.status_post(post, in_reply_to_id=reply_to_post, media_ids=media_ids, visibility=visibility)
+    a = mastodon.status_post(
+        post, in_reply_to_id=reply_to_post, media_ids=media_ids, visibility=visibility
+    )
     logger.info("Posted to mastodon")
     id = a["id"]
     return id
+
 
 def retoot(toot_id):
     a = mastodon.status_reblog(toot_id)
     logger.info("Boosted toot " + str(toot_id))
     logger.debug(a)
+
 
 def delete(toot_id):
     logger.info("deleting toot " + str(toot_id))

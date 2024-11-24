@@ -18,15 +18,15 @@ visibility = "hybrid"
 # for crossposting with no change, "skip" for skipping posts with mentions, "strip" for removing
 # the starting @ of a username and "url" to replace the username with a link to their bluesky profile.
 # Accepted values: ignore, skip, strip, url
-mentions = "strip"
+mentions = "url"
 # post_default sets default posting mode. True means all posts will be crossposted unless otherwise specified,
 # False means no posts will be crossposted unless explicitly specified. If no toggle (below) is specified
 # post_default will be treated as True no matter what is set.
 # Accepted values: True, False
 post_default = True
 # The function to select what posts are crossposted (mis)uses the language function in Bluesky.
-# Enter a language here and all posts will be filtered based on if that language is included 
-# in the post. 
+# Enter a language here and all posts will be filtered based on if that language is included
+# in the post.
 # E.g. if you set post_default to True and add German ("de") as post toggle, all posts including
 # German as a language will be skipped. If post_default is set to False, only posts including
 # german will be crossposted. You can use different languages as selectors for Mastodon
@@ -40,7 +40,7 @@ quote_posts = True
 # max_retries sets maximum amount of times poster will retry a failed crosspost.
 # Accepted values: Integers greater than 0
 max_retries = 5
-# post_time_limit sets max time limit (in hours) for fetching posts. If no database exists, all posts within this time 
+# post_time_limit sets max time limit (in hours) for fetching posts. If no database exists, all posts within this time
 # period will be posted.
 # Accepted values: Integers greater than 0
 post_time_limit = 12
@@ -59,22 +59,94 @@ cross_delete = True
 rate_limit_buffer = 10
 # Sets minimum log level i Loguru logger
 log_level = "INFO"
+# List of tags to ignore in posts. Posts containing any of these tags will be ignored. In case when you don't want some of posts to be synchronized.
+# Example: ignore_tags = ['#ignoreT']
+# Leave old tags on list if you want use other tag. Removing tag from the list will put ignored posts into list of posts to synchronize.
+ignore_tags_twitter = ["#t", "#exclusivebsky"]
+ignore_tags_mastodon = ["#m", "#nomastodon", "#exclusivebsky"]
+# Maximum tweet length for your account.
+# Default is 280. If you have a Twitter Blue subscription, you can set it to 4000.
+max_tweet_length = (
+    4000  # Change to 4000 if you have that capability with Twitter Blue subscription
+)
 
 
 # Override settings with environment variables if they exist
-Twitter = os.environ.get('TWITTER_CROSSPOSTING').lower() == 'true' if os.environ.get('TWITTER_CROSSPOSTING') else Twitter
-Mastodon = os.environ.get('MASTODON_CROSSPOSTING').lower() == 'true' if os.environ.get('MASTODON_CROSSPOSTING') else Mastodon
-log_level = os.environ.get('LOG_LEVEL').lower() == 'true' if os.environ.get('LOG_LEVEL') else log_level
-visibility = os.environ.get('MASTODON_VISIBILITY') if os.environ.get('MASTODON_VISIBILITY') else visibility
-mentions = os.environ.get('MENTIONS') if os.environ.get('MENTIONS') else mentions
-post_default = os.environ.get('POST_DEFAULT').lower() == 'true' if os.environ.get('POST_DEFAULT') else post_default
-mastodon_lang = os.environ.get('MASTODON_LANG') if os.environ.get('MASTODON_LANG') else mastodon_lang
-twitter_lang = os.environ.get('TWITTER_LANG') if os.environ.get('TWITTER_LANG') else twitter_lang
-quote_posts = os.environ.get('QUOTE_POSTS') if os.environ.get('QUOTE_POSTS') else quote_posts
-max_retries = int(os.environ.get('MAX_RETRIES')) if os.environ.get('MAX_RETRIES') else max_retries
-post_time_limit = int(os.environ.get('POST_TIME_LIMIT')) if os.environ.get('POST_TIME_LIMIT') else post_time_limit
-max_per_hour = int(os.environ.get('MAX_PER_HOUR')) if os.environ.get('MAX_PER_HOUR') else max_per_hour
-overflow_posts = int(os.environ.get('OVERFLOW_POST')) if os.environ.get('OVERFLOW_POST') else overflow_posts
-rate_limig_buffer = int(os.environ.get('RATE_LIMIT_BUFFER')) if os.environ.get('RATE_LIMIT_BUFFER') else rate_limit_buffer
-log_level = int(os.environ.get('LOG_LEVEL')) if os.environ.get('LOG_LEVEL') else log_level
-cross_delete = int(os.environ.get('CROSS_DELETE')) if os.environ.get('CROSS_DELETE') else cross_delete
+Twitter = (
+    os.environ.get("TWITTER_CROSSPOSTING").lower() == "true"
+    if os.environ.get("TWITTER_CROSSPOSTING")
+    else Twitter
+)
+Mastodon = (
+    os.environ.get("MASTODON_CROSSPOSTING").lower() == "true"
+    if os.environ.get("MASTODON_CROSSPOSTING")
+    else Mastodon
+)
+log_level = (
+    os.environ.get("LOG_LEVEL").lower() == "true"
+    if os.environ.get("LOG_LEVEL")
+    else log_level
+)
+visibility = (
+    os.environ.get("MASTODON_VISIBILITY")
+    if os.environ.get("MASTODON_VISIBILITY")
+    else visibility
+)
+mentions = os.environ.get("MENTIONS") if os.environ.get("MENTIONS") else mentions
+post_default = (
+    os.environ.get("POST_DEFAULT").lower() == "true"
+    if os.environ.get("POST_DEFAULT")
+    else post_default
+)
+mastodon_lang = (
+    os.environ.get("MASTODON_LANG")
+    if os.environ.get("MASTODON_LANG")
+    else mastodon_lang
+)
+twitter_lang = (
+    os.environ.get("TWITTER_LANG") if os.environ.get("TWITTER_LANG") else twitter_lang
+)
+quote_posts = (
+    os.environ.get("QUOTE_POSTS") if os.environ.get("QUOTE_POSTS") else quote_posts
+)
+max_retries = (
+    int(os.environ.get("MAX_RETRIES")) if os.environ.get("MAX_RETRIES") else max_retries
+)
+post_time_limit = (
+    int(os.environ.get("POST_TIME_LIMIT"))
+    if os.environ.get("POST_TIME_LIMIT")
+    else post_time_limit
+)
+max_per_hour = (
+    int(os.environ.get("MAX_PER_HOUR"))
+    if os.environ.get("MAX_PER_HOUR")
+    else max_per_hour
+)
+overflow_posts = (
+    int(os.environ.get("OVERFLOW_POST"))
+    if os.environ.get("OVERFLOW_POST")
+    else overflow_posts
+)
+rate_limit_buffer = (
+    int(os.environ.get("RATE_LIMIT_BUFFER"))
+    if os.environ.get("RATE_LIMIT_BUFFER")
+    else rate_limit_buffer
+)
+log_level = (
+    int(os.environ.get("LOG_LEVEL")) if os.environ.get("LOG_LEVEL") else log_level
+)
+cross_delete = (
+    int(os.environ.get("CROSS_DELETE"))
+    if os.environ.get("CROSS_DELETE")
+    else cross_delete
+)
+ignore_tags_twitter = (
+    os.environ.get("IGNORE_TAGS_TWITTER").split(",")
+    if os.environ.get("IGNORE_TAGS_TWITTER")
+    else ignore_tags_twitter
+)
+ignore_tags_mastodon = (
+    os.environ.get("IGNORE_TAGS_MASTODON").split(",")
+    if os.environ.get("IGNORE_TAGS_MASTODON")
+    else ignore_tags_mastodon
+)
