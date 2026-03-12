@@ -29,11 +29,13 @@ def run():
     timelimit = get_post_time_limit(post_cache)
     posts, deleted = get_posts(timelimit, deleted)
     logger.debug(post_cache)
+    deleted_updates = False
     if deleted:
         database, post_cache = delete(deleted, post_cache, database)
-        updates = True
+        deleted_updates = True
     logger.debug(post_cache)
-    updates, database, post_cache = post(posts, database, post_cache)
+    post_updates, database, post_cache = post(posts, database, post_cache)
+    updates = deleted_updates or post_updates
     post_cache_write(post_cache)
     if updates:
         save_db(database)

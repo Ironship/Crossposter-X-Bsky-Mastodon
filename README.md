@@ -12,12 +12,13 @@ Crossposter-X-Bsky-Mastodon is a Python script that automatically crossposts you
 - Limits posts per hour and handles overflow posts.
 - Cross-deletion: deletes posts from Mastodon and Twitter if deleted on Bluesky within one hour.
 - Option to ignore specific tags when crossposting.
+- **Optional GUI** for easy configuration and manual runs (requires `tkinter`).
 
 ## Configuration
 
 ### Authentication
 
-Fill in the necessary keys and passwords in [settings/auth.py](settings/auth.py):
+Fill in the necessary keys and passwords in [settings/auth.py](settings/auth.py), **or use the GUI** (`python gui.py`) which lets you enter credentials through a graphical form and saves them for you:
 
 ```py
 BSKY_HANDLE = "your_bluesky_handle"
@@ -33,13 +34,14 @@ TWITTER_ACCESS_TOKEN_SECRET = "your_twitter_access_token_secret"
 
 ### Ignoring Tags
 
-To ignore specific tags when crossposting, add the tags you want to ignore to the `IGNORE_TAGS` list in [settings/config.py](settings/config.py):
+To ignore specific tags when crossposting, add the tags you want to ignore to `ignore_tags_twitter` / `ignore_tags_mastodon` in [settings/settings.py](settings/settings.py).
 
 ## Installation and Running
 
 ### Prerequisites
-- Python 3.8 until 3.11 (I didnt test above 3.11)
+- Python 3.10 or newer
 - pip (Python package installer)
+- `tkinter` (stdlib, usually pre-installed — on Debian/Ubuntu: `sudo apt install python3-tk`)
 
 ### Running
 
@@ -55,29 +57,39 @@ cd Crossposter-X-Bsky-Mastodon
 pip install -r requirements.txt
 ```
 
-3. Configure your settings in auth.py and settings.py
+3. Configure your settings — either edit `settings/auth.py` and `settings/settings.py` directly, or use the GUI (see below).
 
-4. On Windows
-Run the included batch file: run.bat
+### GUI (recommended for first-time setup)
+
+Launch the graphical interface:
+```bash
+python gui.py
+```
+
+The GUI has three tabs:
+- **Authentication** — enter and save your Bluesky, Mastodon, and Twitter/X credentials.
+- **Settings** — toggle platforms, visibility, mention handling, rate-limit options, and more.
+- **Run & Logs** — run the crossposter manually with a single click, watch live log output, and optionally enable automatic periodic runs.
+
+### Running headless (no GUI)
+
+#### On Windows
+Run the included batch file: `run.bat`
 
 This will start the crossposter and automatically run it every hour.
 
-On Linux/macOS
-Run the included shell script: run.sh
+#### On Linux/macOS
+Run the included shell script: `run.sh`
 
 This will start the crossposter and automatically run it every hour.
 
-
-Running Manually
-If you prefer to run the script manually once awhile just run:
-```console
+#### Manually (single run)
+```bash
 python crosspost.py
 ```
 
 
 ## TODO
 
-- Implement an optional GUI if not running inside Docker.
 - Check and fix Docker configuration.
-- Upgrade Python version to the latest stable release.
 - Add support for optional long posts on Twitter by aggregating short Bluesky posts if Twitter Blue is active.

@@ -4,12 +4,6 @@ import os
 # Accepted values: True, False
 Twitter = True
 Mastodon = True
-# log_level determines what messages will be written to the log.
-# "error" means only error messages will be written to the log.
-# "verbose" means all messages will be written to the log.
-# "none" means no messages will be written to the log (not recommended).
-# Accepted values: error, verbose, none
-log_level = "verbose"
 # visibility sets what visibility should be used when posting to Mastodon. Options are "public" for always public, "unlisted" for always unlisted,
 # "private" for always private and "hybrid" for all posts public except responses in threads (meaning first post in a thread is public and the rest unlisted).
 # Accepted values: public, private, hybrid
@@ -66,9 +60,7 @@ ignore_tags_twitter = ["#t", "#exclusivebsky"]
 ignore_tags_mastodon = ["#m", "#nomastodon", "#exclusivebsky"]
 # Maximum tweet length for your account.
 # Default is 280. If you have a Twitter Blue subscription, you can set it to 4000.
-max_tweet_length = (
-    280  # Change to 4000 if you have that capability with Twitter Blue subscription
-)
+max_tweet_length = 280  # Change to 4000 if you have that capability with Twitter Blue subscription
 
 
 # Override settings with environment variables if they exist
@@ -83,7 +75,7 @@ Mastodon = (
     else Mastodon
 )
 log_level = (
-    os.environ.get("LOG_LEVEL").lower() == "true"
+    os.environ.get("LOG_LEVEL")
     if os.environ.get("LOG_LEVEL")
     else log_level
 )
@@ -123,7 +115,7 @@ max_per_hour = (
     else max_per_hour
 )
 overflow_posts = (
-    int(os.environ.get("OVERFLOW_POST"))
+    os.environ.get("OVERFLOW_POST")
     if os.environ.get("OVERFLOW_POST")
     else overflow_posts
 )
@@ -132,11 +124,8 @@ rate_limit_buffer = (
     if os.environ.get("RATE_LIMIT_BUFFER")
     else rate_limit_buffer
 )
-log_level = (
-    int(os.environ.get("LOG_LEVEL")) if os.environ.get("LOG_LEVEL") else log_level
-)
 cross_delete = (
-    int(os.environ.get("CROSS_DELETE"))
+    os.environ.get("CROSS_DELETE").lower() == "true"
     if os.environ.get("CROSS_DELETE")
     else cross_delete
 )
